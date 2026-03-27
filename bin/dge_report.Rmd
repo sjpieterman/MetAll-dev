@@ -1,0 +1,203 @@
+---
+title: "DGE Markdown Analysis"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    df_print: paged
+params:
+  counts: "counts.tsv"
+  metadata: "metadata.csv"
+  outdir: "."
+  tool: "deseq2"
+  batch_method: "none"
+  batch_col: null
+  group_col: "group"
+  covariates: null
+  sample_col: "sample"
+  metadata_sep: "auto"
+  control: null
+  treatment: null
+  p_threshold: 0.05
+  fc_threshold: 1.0
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(edgeR)
+library(limma)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+library(dplyr)
+library(plotly)
+library(htmlwidgets)
+library(jsonlite)
+if (params$tool == "deseq2") library(DESeq2)
+if (!is.null(params$batch_method) && params$batch_method == "combat") library(sva)
+
+read_metadata_flexible <- function(path, sep_opt = "auto") {
+  if (sep_opt == "tab") return(read.delim(path, header=TRUE, check.names=FALSE, stringsAsFactors=FALSE))
+  if (sep_opt == "comma") return(read.csv(path, header=TRUE, check.names=FALSE, stringsAsFactors=FALSE))
+  if (sep_opt == "semicolon") return(read.csv(path, header=TRUE, sep=";", check.names=FALSE, stringsAsFactors=FALSE))
+
+  first <- readLines(path, n = 1, warn = FALSE)
+  sep <- "\t"
+  if (grepl(";", first, fixed = TRUE) && !grepl("\t", first, fixed = TRUE) && !grepl(",", first, fixed = TRUE)) {
+    sep <- ";"
+  } else if (grepl(",", first, fixed = TRUE) && !grepl("\t", first, fixed = TRUE)) {
+    sep <- ","
+  } else if (grepl("\t", first, fixed = TRUE)) {
+    sep <- "\t"
+  }
+  read.table(path, header=TRUE, sep=sep, check.names=FALSE, stringsAsFactors=FALSE, quote="\"", comment.char="")
+}
+
+build_design_formula <- function(group_col, covars) {
+  terms <- c(covars, group_col)
+  as.formula(paste("~", paste(terms, collapse = " + ")))
+}
+
+parse_covariates <- function(x) {
+  if (is.null(x) || is.na(x) || trimws(x) == "") return(character(0))
+  out <- unlist(strsplit(x, ",", fixed = TRUE))
+  out <- trimws(out)
+  out <- out[out != ""]
+  unique(out)
+}
+```
+
+## Load Data
+
+```{r load_data}
+counts <- read.table(params$counts, header=TRUE, sep="\t", row.names=1, check.names=FALSE)
+metadata <- read_metadata_flexible(params$metadata, params$metadata_sep)
+
+# Ensure metadata matches counts
+metadata_samples <- as.character(metadata[[params$sample_col]])
+common_samples <- intersect(colnames(counts), metadata_samples)
+counts <- counts[, common_samples, drop=FALSE]
+metadata <- metadata[match(common_samples, metadata_samples), , drop=FALSE]
+
+# Group column as factor
+grp_raw <- trimws(as.character(metadata[[params$group_col]]))
+grp_raw[grp_raw == ""] <- NA
+metadata[[params$group_col]] <- as.factor(grp_raw)
+
+# Filter for control and treatment
+samples_to_keep <- !is.na(metadata[[params$group_col]]) & metadata[[params$group_col]] %in% c(params$control, params$treatment)
+counts <- counts[, samples_to_keep, drop=FALSE]
+metadata <- metadata[samples_to_keep, , drop=FALSE]
+metadata[[params$group_col]] <- droplevels(metadata[[params$group_col]])
+metadata[[params$group_col]] <- relevel(metadata[[params$group_col]], ref=params$control)
+
+covars <- parse_covariates(params$covariates)
+if (length(covars) > 0) {
+  for (cv in covars) {
+    if (is.character(metadata[[cv]])) metadata[[cv]] <- as.factor(metadata[[cv]])
+  }
+}
+
+# Filtering low counts
+keep <- rowSums(cpm(counts) > 1) >= (min(table(metadata[[params$group_col]])))
+counts <- counts[keep,]
+```
+
+## DGE Analysis
+
+```{r analysis}
+res_df <- NULL
+normalized_counts <- NULL
+
+if (params$tool == "deseq2") {
+  design_formula <- build_design_formula(params$group_col, covars)
+  dds <- DESeqDataSetFromMatrix(countData = round(counts), colData = metadata, design = design_formula)
+  dds <- DESeq(dds)
+  res <- results(dds, contrast = c(params$group_col, params$treatment, params$control))
+  normalized_counts <- counts(dds, normalized=TRUE)
+  res_df <- as.data.frame(res)
+  colnames(res_df)[colnames(res_df) == "padj"] <- "adj.P.Val"
+  colnames(res_df)[colnames(res_df) == "log2FoldChange"] <- "logFC"
+  colnames(res_df)[colnames(res_df) == "pvalue"] <- "P.Value"
+} else if (params$tool == "edger") {
+  dge <- DGEList(counts=counts, group=metadata[[params$group_col]])
+  dge <- calcNormFactors(dge)
+  design <- model.matrix(build_design_formula(params$group_col, covars), data=metadata)
+  dge <- estimateDisp(dge, design)
+  fit <- glmQLFit(dge, design)
+  qlf <- glmQLFTest(fit, coef=ncol(design))
+  res <- topTags(qlf, n=Inf)
+  res_df <- as.data.frame(res)
+  normalized_counts <- cpm(dge)
+  colnames(res_df)[colnames(res_df) == "FDR"] <- "adj.P.Val"
+  colnames(res_df)[colnames(res_df) == "PValue"] <- "P.Value"
+} else if (params$tool == "limma") {
+  dge <- DGEList(counts=counts)
+  dge <- calcNormFactors(dge)
+  design <- model.matrix(build_design_formula(params$group_col, covars), data=metadata)
+  v <- voom(dge, design, plot=FALSE)
+  fit <- lmFit(v, design)
+  fit <- eBayes(fit)
+  res <- topTable(fit, coef=ncol(design), n=Inf)
+  res_df <- as.data.frame(res)
+  normalized_counts <- v$E
+}
+
+res_df$gene_id <- rownames(res_df)
+res_df$significance <- "Not Significant"
+res_df$significance[res_df$adj.P.Val < params$p_threshold & res_df$logFC > params$fc_threshold] <- "Upregulated"
+res_df$significance[res_df$adj.P.Val < params$p_threshold & res_df$logFC < -params$fc_threshold] <- "Downregulated"
+```
+
+## Results Summary
+
+```{r summary}
+table(res_df$significance)
+```
+
+## Volcano Plot
+
+```{r volcano}
+p_volcano <- ggplot(res_df, aes(x=logFC, y=-log10(P.Value), color=significance)) +
+  geom_point(alpha=0.4, size=1.5) +
+  scale_color_manual(values=c("Upregulated"="#ff6b6b", "Downregulated"="#00d9ff", "Not Significant"="#888888")) +
+  theme_minimal() +
+  geom_vline(xintercept=c(-params$fc_threshold, params$fc_threshold), linetype="dashed") +
+  geom_hline(yintercept=-log10(params$p_threshold), linetype="dashed") +
+  ggtitle(paste("Volcano Plot:", params$treatment, "vs", params$control))
+
+ggplotly(p_volcano)
+```
+
+## PCA Plot
+
+```{r pca}
+if (!is.null(normalized_counts)) {
+  pca_data <- t(log2(normalized_counts + 1))
+  pca <- prcomp(pca_data)
+  pca_df <- as.data.frame(pca$x)
+  pca_df$Sample <- rownames(pca_df)
+  pca_df$Group <- metadata[[params$group_col]]
+  
+  percentVar <- round(100 * pca$sdev^2 / sum(pca$sdev^2))
+  
+  p_pca <- ggplot(pca_df, aes(PC1, PC2, color=Group)) +
+    geom_point(size=3) +
+    xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+    ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+    ggtitle("PCA Plot") +
+    theme_minimal()
+  
+  ggplotly(p_pca)
+}
+```
+
+## Top 50 DEGs
+
+```{r top50}
+top50 <- res_df %>%
+  filter(significance != "Not Significant") %>%
+  arrange(adj.P.Val) %>%
+  head(50)
+top50
+```

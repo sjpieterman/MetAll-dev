@@ -1,0 +1,53 @@
+/* Container adjustments */
+.block-container {
+    padding-top: 3.5rem !important; /* Increased from 1rem */
+    padding-bottom: 0rem;
+    max-width: 98% !important;
+}
+
+.stCodeBlock {
+    margin-top: 0px;
+}
+
+/* Modern White Toolbar Style */
+.stTabs [data-baseweb="tab-list"] {
+    background-color: #ffffff;
+    border-radius: 8px;
+    padding: 10px 15px; /* Increased vertical padding */
+    box-shadow: 0 4px 6px rgba(0,0,0,0.07);
+    border: 1px solid #e0e0e0;
+    gap: 15px;
+    margin-bottom: 20px; /* Space between toolbar and content */
+}
+
+.stTabs [data-baseweb="tab"] {
+    height: auto; /* Changed from 45px to auto for better fit */
+    min-height: 40px;
+    background-color: transparent;
+    border: none;
+    padding-top: 5px;
+    padding-bottom: 5px;
+}
+
+/* Force Black Text for Tab Labels */
+.stTabs [data-baseweb="tab"] p {
+    color: #333333 !important;
+    font-weight: 400;
+    font-size: 20px;
+    transition: color 0.3s ease;
+}
+
+/* Hover Effect */
+.stTabs [data-baseweb="tab"]:hover p {
+    color: #ff4b4b !important; /* Change to your primary color on hover */
+}
+
+/* Active Tab Style */
+.stTabs [aria-selected="true"] {
+    border-bottom: 3px solid #ff4b4b !important;
+}
+
+.stTabs [aria-selected="true"] p {
+    color: #000000 !important;
+    font-weight: 700 !important;
+}

@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE / editor
+.vscode/
+.idea/
+*.iml
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Testing / cache
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+*.out
+*.err
+.nextflow.log*
+pip-log.txt
+
+# Nextflow
+work/
+.nf-test/
+.nextflow/
+*.trace
+*.timeline
+*.report
+*.dag
+
+# Results / generated outputs
+results/
+singularity_cache/
+*.html
+
+# R
+.Rhistory
+.RData
+.Rproj.user
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Secrets / config
+.env
+*.env
+
+# Keep these if they are input data or important assets
+!mock_metadata.tsv
+test_data/
+test_data_small/
+test_data_small_Big/
+assets/
+!bin/
+!conf/
+!modules/
+!subworkflows/
+!workflows/
+
+ribodetector.sif
