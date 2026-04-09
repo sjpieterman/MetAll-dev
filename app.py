@@ -80,6 +80,7 @@ import base64
 from dash import Dash, html, dcc, Input, Output, State, dash_table, callback_context, no_update
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import importlib.util
 import sys
 import flask
@@ -172,8 +173,8 @@ def find_counts_file(run_outdir):
     return None
 
 INITIAL_PARAMS = {
-    "reads": "test_data_small/",
-    "outdir": "results",
+    "reads": "/media/baseripper/volume_28TB_1/P11065_test/",
+    "outdir": "/media/baseripper/volume_28TB_1/P11065_test/results",
     "profile": "singularity",
     "cpus": 40,
     "memory": "200.GB",
@@ -187,6 +188,8 @@ INITIAL_PARAMS = {
     "tg_fastqc": True,
     "tg_clip_r1": 0,
     "tg_clip_r2": 0,
+    "use_fastp": False,
+    "use_falco": True,
     "rd_model": "norrna",
     "rd_len": 150,
     "rd_gpu_mem": 24,
@@ -195,20 +198,23 @@ INITIAL_PARAMS = {
     "smr_coverage": 0.97,
     "smr_mismatch": 2,
     "smr_num_alignments": 1,
-    "smr_db_dir": "/home/baseripper/Documents/rnaSeq-data/rRNA_databases",
+    "smr_db_dir": "/media/baseripper/volume_28TB_2/rRNA_databases",
     "kraken2_db": "/media/baseripper/2TB_Baseripper/Stef/k2_standard_20231009",
     "k2_confidence": 0.0,
     "bracken_level": "S",
     "bracken_read_len": 150,
     "run_parabricks": True,
-    "parabricks_index": "/home/baseripper/programs/MetaLL/MetaLL_0.0.1/assets/GRCh38_indexed/",
-    "genome_fasta": "/home/baseripper/programs/MetaLL/MetaLL_0.0.1/assets/GRCh38_indexed/GRCh38.primary_assembly.genome.fa",
-    "genome_gtf": "/home/baseripper/programs/MetaLL/MetaLL_0.0.1/assets/GRCh38_indexed/gencode.v44.annotation.gtf",
+    "parabricks_index": os.path.join(BASE_DIR, "assets/GRCh38_indexed/"),
+    "genome_fasta": os.path.join(BASE_DIR, "assets/GRCh38_indexed/GRCh38.primary_assembly.genome.fa"),
+    "genome_gtf": os.path.join(BASE_DIR, "assets/GRCh38_indexed/gencode.v44.annotation.gtf"),
     "run_star": False,
-    "star_index": "/home/baseripper/programs/MetaLL/MetaLL_0.0.1/assets/GRCh38_indexed/",
+    "star_index": os.path.join(BASE_DIR, "assets/GRCh38_indexed/"),
     "run_featurecounts": False,
     "run_salmon": False,
     "salmon_index": "",
+    "run_virulence": False,
+    "virulence_db": "/home/baseripper/programs/vfdb/VFDB_setB_pro.fas",
+    "virulence_index": "",
     "run_dge": False,
     "dge_tool": "deseq2",
     "dge_control": None,
@@ -272,9 +278,10 @@ def build_sidebar():
                     {"label": "STAR (CPU)", "value": "run_star"},
                     {"label": "featureCounts", "value": "run_featurecounts"},
                     {"label": "Salmon", "value": "run_salmon"},
+                    {"label": "Virulence Factors", "value": "run_virulence"},
                     {"label": "DGE Analysis", "value": "run_dge"},
                 ],
-                value=["run_trimgalore", "run_ribodetector", "run_kraken2", "run_star", "run_featurecounts", "run_salmon", "run_dge"],
+                value=["run_trimgalore", "run_ribodetector", "run_kraken2", "run_star", "run_featurecounts", "run_salmon", "run_virulence", "run_dge"],
                 id="workflow-checks", switch=True
             ),
 
@@ -348,6 +355,16 @@ def build_trimgalore_tab():
                 value=[1] if INITIAL_PARAMS["tg_fastqc"] else [],
                 id="tg-fastqc", switch=True, className="mt-3"
             ),
+            html.Hr(),
+            html.H5("Performance Options", className="mt-3", style={"fontSize": "1rem"}),
+            dbc.Checklist(
+                options=[
+                    {"label": "Use Fastp (Faster QC & Trimming)", "value": "use_fastp"},
+                    {"label": "Use Falco (Faster FastQC)", "value": "use_falco"},
+                ],
+                value=(["use_fastp"] if INITIAL_PARAMS["use_fastp"] else []) + (["use_falco"] if INITIAL_PARAMS["use_falco"] else []),
+                id="perf-checks", switch=True, className="mt-2"
+            ),
         ]),
         html.Div([
             html.H5("Trimming Statistics", className="mt-3 mb-3", style={"fontWeight": "600", "color": "#00d9ff"}),
@@ -413,6 +430,32 @@ def build_sortmerna_tab():
     )
 
 
+def build_virulence_tab():
+    return tool_layout(
+        "Virulence Factor Settings",
+        html.Div([
+            html.P("Align reads to a curated virulence gene database to confirm expression.", className="small text-muted"),
+            html.Label("Virulence DB (FASTA)", style={"fontWeight": "500"}),
+            dbc.Input(id="virulence-db", type="text", value=INITIAL_PARAMS["virulence_db"], placeholder="/path/to/vfdb.fasta", className="mb-2"),
+            html.Label("Pre-computed Index", className="mt-2", style={"fontWeight": "500"}),
+            dbc.Input(id="virulence-index", type="text", value=INITIAL_PARAMS["virulence_index"], placeholder="/path/to/salmon_index", className="mb-2"),
+            html.Hr(),
+            html.P("Common Databases:", className="small mb-1"),
+            html.Ul([
+                html.Li("VFDB (Virulence Factor Database)", className="small"),
+                html.Li("PATRIC / Virulence", className="small"),
+                html.Li("CARD (Resistance Factors)", className="small"),
+                html.Li("BacMet (Metal Resistance)", className="small"),
+            ], className="small text-muted")
+        ]),
+        html.Div([
+            html.H5("Virulence Results", className="mt-3"),
+            html.P("Abundance estimates (TPM) will be available in the results viewer after the run.", className="text-muted"),
+            dbc.Alert("Ensure you have enabled 'Virulence Factors' in the sidebar workflow settings.", color="warning", className="mt-3")
+        ])
+    )
+
+
 def build_results_viewer_tab():
     return tool_layout(
         "Pipeline Outputs",
@@ -428,6 +471,7 @@ def build_results_viewer_tab():
                     {"label": "SortMeRNA", "value": "sortmerna"},
                     {"label": "Kraken2", "value": "kraken2"},
                     {"label": "Bracken", "value": "bracken"},
+                    {"label": "Virulence", "value": "virulence"},
                     {"label": "STAR", "value": "star"},
                     {"label": "featureCounts", "value": "featurecounts"},
                     {"label": "Salmon", "value": "salmon"},
@@ -525,6 +569,11 @@ def build_metatranscriptomics_tab():
                     dbc.Tab(label="Species Abundance", children=[
                         html.Div([
                             dcc.Graph(id="bracken-bar-plot")
+                        ], className="p-3")
+                    ]),
+                    dbc.Tab(label="Overall Abundance", children=[
+                        html.Div([
+                            dcc.Graph(id="overall-abundance-plot")
                         ], className="p-3")
                     ]),
                     dbc.Tab(label="Krona Plot", children=[
@@ -937,6 +986,7 @@ app.layout = dbc.Container([
         dbc.Tab(label="TrimGalore", children=build_trimgalore_tab(), tab_style={"fontWeight": "500"}),
         dbc.Tab(label="RiboDetector", children=build_ribodetector_tab(), tab_style={"fontWeight": "500"}),
         dbc.Tab(label="SortMeRNA", children=build_sortmerna_tab(), tab_style={"fontWeight": "500"}),
+        dbc.Tab(label="Virulence", children=build_virulence_tab(), tab_style={"fontWeight": "500"}),
         dbc.Tab(label="Results Viewer", children=build_results_viewer_tab(), tab_style={"fontWeight": "500"}),
         dbc.Tab(label="Analysis", children=build_analysis_tab(), tab_style={"fontWeight": "500"}),
     ])
@@ -1022,6 +1072,8 @@ pipeline_log_file = None
      State("k2-confidence", "value"),
      State("bracken-level", "value"),
      State("salmon-index", "value"),
+     State("virulence-db", "value"),
+     State("virulence-index", "value"),
      State("star-index", "value"),
      State("parabricks-index", "value"),
      State("genome-fasta", "value"),
@@ -1043,7 +1095,8 @@ pipeline_log_file = None
      State("dge-use-biomart", "value"),
      State("dge-auto-install", "value"),
      State("dge-proxy", "value"),
-     State("base-outdir", "value")],
+     State("base-outdir", "value"),
+     State("perf-checks", "value")],
     prevent_initial_call=True
 )
 def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
@@ -1051,11 +1104,11 @@ def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
                  rd_len, rd_mode, rd_device, rd_gpu_mem, rd_threads,
                  smr_coverage, smr_mismatch, smr_num_align, smr_db_dir,
                  k2_db_path, k2_confidence, bracken_level,
-                 salmon_index, star_index, parabricks_index, genome_fasta, genome_gtf,
+                 salmon_index, virulence_db, virulence_index, star_index, parabricks_index, genome_fasta, genome_gtf,
                  dge_tool, dge_control, dge_treatment, dge_comparison,
                  batch_method, batch_col, dge_p_thresh, dge_fc_thresh,
                  dge_group_col, dge_covariates, enrichment_checks, ontology, organism_db, keytype,
-                 use_biomart, auto_install, proxy, base_outdir):
+                 use_biomart, auto_install, proxy, base_outdir, perf_checks):
     global pipeline_process, pipeline_log_file
 
     if n_clicks is None:
@@ -1092,6 +1145,8 @@ def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
     bracken_level = coalesce(bracken_level, INITIAL_PARAMS["bracken_level"])
 
     salmon_index = coalesce(salmon_index, INITIAL_PARAMS["salmon_index"])
+    virulence_db = coalesce(virulence_db, INITIAL_PARAMS["virulence_db"])
+    virulence_index = coalesce(virulence_index, INITIAL_PARAMS["virulence_index"])
     star_index = coalesce(star_index, INITIAL_PARAMS["star_index"])
     parabricks_index = coalesce(parabricks_index, INITIAL_PARAMS["parabricks_index"])
     genome_fasta = coalesce(genome_fasta, INITIAL_PARAMS["genome_fasta"])
@@ -1106,6 +1161,9 @@ def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
     dge_fc_thresh = coalesce(dge_fc_thresh, INITIAL_PARAMS["dge_fc_threshold"])
     dge_group_col = coalesce(dge_group_col, "group")
     dge_covariates = coalesce(dge_covariates, [])
+    perf_checks = coalesce(perf_checks, [])
+    use_fastp = "use_fastp" in perf_checks
+    use_falco = "use_falco" in perf_checks
 
     # --- Resolve output directory ---
     outdir = get_run_outdir(run_name, base_outdir)
@@ -1131,7 +1189,6 @@ def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
         "-profile", INITIAL_PARAMS["profile"],
         "--reads", str(reads),
         "--outdir", str(outdir),
-        "--samplesheet", str(samplesheet_path),
         "--max_cpus", str(cpus),
         "--max_mem", str(memory),
         "--run_trimgalore", str("run_trimgalore" in workflow).lower(),
@@ -1142,6 +1199,7 @@ def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
         "--run_star", str("run_star" in workflow).lower(),
         "--run_featurecounts", str("run_featurecounts" in workflow).lower(),
         "--run_salmon", str("run_salmon" in workflow).lower(),
+        "--run_virulence", str("run_virulence" in workflow).lower(),
         "--run_dge", str("run_dge" in workflow).lower(),
 
         "--tg_quality", str(tg_quality),
@@ -1163,24 +1221,50 @@ def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
 
         "--kraken2_db", str(k2_db_path),
         "--k2_confidence", str(k2_confidence),
-        "--bracken_level", str(bracken_level),
+        "--bracken_level", str(bracken_level)
+    ]
 
-        "--salmon_index", str(salmon_index) if salmon_index else "null",
+    # Optional parameters: only add if they are not empty/None
+    if salmon_index:
+        cmd.extend(["--salmon_index", str(salmon_index)])
+    if virulence_db:
+        cmd.extend(["--virulence_db", str(virulence_db)])
+    if virulence_index:
+        cmd.extend(["--virulence_index", str(virulence_index)])
+    
+    cmd.extend([
         "--star_index", str(star_index),
         "--parabricks_index", str(parabricks_index),
         "--genome_fasta", str(genome_fasta),
-        "--genome_gtf", str(genome_gtf),
+        "--genome_gtf", str(genome_gtf)
+    ])
 
-        "--dge_tool", str(dge_tool),
-        "--dge_control", str(dge_control),
-        "--dge_treatment", str(dge_treatment),
-        "--dge_comparison_name", str(dge_comparison),
+    if dge_tool:
+        cmd.extend(["--dge_tool", str(dge_tool)])
+    if dge_control:
+        cmd.extend(["--dge_control", str(dge_control)])
+    if dge_treatment:
+        cmd.extend(["--dge_treatment", str(dge_treatment)])
+    if dge_comparison:
+        cmd.extend(["--dge_comparison_name", str(dge_comparison)])
+    
+    cmd.extend([
         "--group_col", str(dge_group_col) if dge_group_col else "group",
-        "--covariates", ",".join(dge_covariates) if dge_covariates else "null",
-        "--batch_method", str(batch_method),
-        "--batch_col", str(batch_col) if batch_col else "null",
-        "--dge_p_threshold", str(dge_p_thresh),
-        "--dge_fc_threshold", str(dge_fc_thresh),
+    ])
+
+    if dge_covariates:
+        cmd.extend(["--covariates", ",".join(dge_covariates)])
+    
+    cmd.extend([
+        "--batch_method", str(batch_method or "none"),
+    ])
+
+    if batch_col:
+        cmd.extend(["--batch_col", str(batch_col)])
+
+    cmd.extend([
+        "--dge_p_threshold", str(dge_p_thresh or 0.05),
+        "--dge_fc_threshold", str(dge_fc_thresh or 1.0),
 
         "--dge_run_go", str(enrichment_checks and "go" in enrichment_checks).lower(),
         "--dge_run_gsea", str(enrichment_checks and "gsea" in enrichment_checks).lower(),
@@ -1188,9 +1272,16 @@ def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
         "--dge_ontology", str(ontology or "BP"),
         "--dge_keytype", str(keytype or "SYMBOL"),
         "--dge_use_biomart", str(use_biomart and 1 in use_biomart).lower(),
-        "--dge_autoinstall", str(auto_install and 1 in auto_install).lower(),
-        "--http_proxy", str(proxy or "null")
-    ]
+        "--dge_autoinstall", str(auto_install and 1 in auto_install).lower()
+    ])
+
+    if proxy:
+        cmd.extend(["--http_proxy", str(proxy)])
+
+    cmd.extend([
+        "--use_fastp", str(use_fastp).lower(),
+        "--use_falco", str(use_falco).lower()
+    ])
 
     if resume and 1 in resume:
         cmd.append("-resume")
@@ -2024,6 +2115,113 @@ def update_krona_plot(sample, run_name, _, base_outdir):
         return dbc.Alert(f"Krona Plot HTML not found for {sample} (Searched in kraken2/ and krona/ folders)", color="info")
     except Exception as e:
         return dbc.Alert(f"Error loading Krona plot: {str(e)[:100]}", color="danger")
+
+# Overall Abundance Plot callback (CTL vs CASES)
+@app.callback(
+    Output("overall-abundance-plot", "figure"),
+    [Input("output-run-name", "value"),
+     Input("mt-update", "n_intervals")],
+    [State("base-outdir", "value")]
+)
+def update_overall_abundance_plot(run_name, _, base_outdir):
+    if not run_name:
+        return go.Figure()
+
+    try:
+        current_outdir = get_run_outdir(run_name, base_outdir)
+        bracken_dir = os.path.join(current_outdir, "bracken")
+
+        if not os.path.exists(bracken_dir):
+            return go.Figure().add_annotation(text="Bracken results not available yet (check 'bracken' folder)", showarrow=False)
+
+        bracken_files = [f for f in os.listdir(bracken_dir) if f.endswith(".bracken.tsv")]
+        if not bracken_files:
+            return go.Figure().add_annotation(text="No .bracken.tsv files found in bracken/ folder", showarrow=False)
+
+        all_samples_data = {}
+        for bf in bracken_files:
+            sample_name = bf.replace(".bracken.tsv", "")
+            try:
+                df = pd.read_csv(os.path.join(bracken_dir, bf), sep='\t')
+                if 'name' in df.columns and 'new_est_reads' in df.columns:
+                    all_samples_data[sample_name] = df.groupby('name')['new_est_reads'].sum()
+            except Exception:
+                continue
+
+        if not all_samples_data:
+            return go.Figure().add_annotation(text="Could not extract data from Bracken files", showarrow=False)
+
+        full_df = pd.DataFrame(all_samples_data).fillna(0)
+        all_samples = sorted(full_df.columns.tolist())
+        
+        # Optionally sort by CTL, then CASES, then others to maintain some grouping
+        ctl_samples = sorted([s for s in all_samples if "CTL" in s.upper()])
+        cases_samples = sorted([s for s in all_samples if "CASES" in s.upper()])
+        other_samples = sorted([s for s in all_samples if s not in ctl_samples and s not in cases_samples])
+        all_ordered_samples = ctl_samples + cases_samples + other_samples
+
+        if not all_ordered_samples:
+            return go.Figure().add_annotation(text="No samples available.", showarrow=False)
+
+        # Exclude Human
+        df_no_human = full_df.drop(index="Homo sapiens", errors='ignore')
+        total_non_human = df_no_human.sum()
+        
+        # Select Top 10 Taxa by total abundance across ALL samples
+        top_taxa = df_no_human.sum(axis=1).sort_values(ascending=False).head(10).index.tolist()
+        
+        # Calculate Relative Abundance (%)
+        total_non_human_safe = total_non_human.replace(0, 1)
+        rel_abund = df_no_human.loc[top_taxa].div(total_non_human_safe) * 100
+
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.08,
+            subplot_titles=("Filtered Reads", "Relative Abundance (%)"),
+            row_heights=[0.3, 0.7]
+        )
+
+        colors = px.colors.qualitative.Alphabet + px.colors.qualitative.Dark24
+        taxa_colors = {taxa: colors[i % len(colors)] for i, taxa in enumerate(top_taxa)}
+
+        # Top: Reads
+        fig.add_trace(
+            go.Bar(x=all_ordered_samples, y=total_non_human[all_ordered_samples] / 1e6, 
+                   marker_color='black', showlegend=False, hovertemplate="Sample: %{x}<br>Reads: %{y:.2f}M<extra></extra>"),
+            row=1, col=1
+        )
+        
+        # Bottom: Stacked Abundance
+        for taxa in top_taxa:
+            fig.add_trace(
+                go.Bar(x=all_ordered_samples, y=rel_abund.loc[taxa, all_ordered_samples], name=taxa,
+                       marker_color=taxa_colors[taxa], legendgroup=taxa, showlegend=True,
+                       hovertemplate="Taxa: " + taxa + "<br>Sample: %{x}<br>Abundance: %{y:.2f}%<extra></extra>"),
+                row=2, col=1
+            )
+
+        fig.update_layout(
+            barmode='stack',
+            template="plotly_dark",
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            height=700,
+            margin=dict(t=50, b=50, l=80, r=20),
+            legend=dict(orientation="v", y=0.5, x=1.02, xanchor="left", font=dict(size=10))
+        )
+
+        fig.update_yaxes(title_text="Filtered Reads (10⁶)", row=1, col=1)
+        fig.update_yaxes(title_text="Relative Abundance (%)", range=[0, 100], row=2, col=1)
+        
+        max_reads = total_non_human.max() / 1e6 * 1.1 if not total_non_human.empty else 1
+        fig.update_yaxes(range=[0, max_reads], row=1, col=1)
+
+        return fig
+
+    except Exception as e:
+        return go.Figure().add_annotation(text=f"Error: {str(e)}", showarrow=False)
+
 
 # Metatranscriptomics update indicator
 @app.callback(

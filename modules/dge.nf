@@ -5,7 +5,7 @@ process DGE_R_ANALYSIS {
     label 'process_medium'
     publishDir "${params.outdir}/dge_analysis/${comparison_name}", mode: 'copy'
 
-    container 'quay.io/biocontainers/bioconductor-deseq2:1.40.0--r43hf17093f_0'
+    container 'quay.io/biocontainers/mulled-v2-88ad01a0658428173499f668f12143003e670d8a:afaa2c0fcd83014cb964175390099898f82877a5-0'
 
     input:
     path counts_file
@@ -21,12 +21,20 @@ process DGE_R_ANALYSIS {
 
     output:
     path "dge_results.csv", emit: results
-    path "pca_plot.png", emit: pca
-    path "volcano_plot.png", emit: volcano
+    path "volcano_plot.png", emit: volcano_png
+    path "volcano_plot.html", emit: volcano_html, optional: true
+    path "ma_plot.html", emit: ma_plot, optional: true
+    path "pca_plot.png", emit: pca_png
+    path "pca_plot.html", emit: pca_html, optional: true
+    path "heatmap.html", emit: heatmap, optional: true
+    path "dge_summary.json", emit: summary
+    path "top50_degs.csv", emit: top50
+    path "normalized_counts.tsv", emit: normalized_counts, optional: true
+    path "dataset_qc/*", emit: dataset_qc, optional: true
 
     script:
-    def batch_arg = batch_method != 'none' && batch_col ? "--batch_method ${batch_method} --batch_col ${batch_col}" : ""
-    def covar_arg = covariates != 'null' ? "--covariates ${covariates}" : ""
+    def batch_arg = batch_method != 'none' && batch_col && batch_col != 'null' ? "--batch_method ${batch_method} --batch_col ${batch_col}" : ""
+    def covar_arg = covariates && covariates != 'null' ? "--covariates ${covariates}" : ""
     def proxy_env = params.http_proxy ? "export http_proxy=${params.http_proxy}; export https_proxy=${params.http_proxy};" : ""
     def install_env = params.dge_autoinstall ? "" : "export METALL_NO_R_AUTOINSTALL=1;"
     

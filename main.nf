@@ -11,7 +11,9 @@ include { KRAKEN2 } from './modules/kraken2'
 include { BRACKEN } from './modules/bracken'
 include { KRONA } from './modules/krona'
 include { SALMON_INDEX; SALMON_QUANT } from './modules/salmon'
+include { SALMON_VIRULENCE_INDEX; SALMON_VIRULENCE_QUANT } from './modules/virulence'
 include { DGE_R_ANALYSIS } from './modules/dge'
+include { FASTP } from './modules/fastp'
 
 // Added (were previously never called)
 include { SORTMERNA } from './modules/sortmerna'
@@ -53,11 +55,19 @@ workflow {
         .set { read_pairs }
 
     // 2. Initial QC and Trimming
-    if (params.run_trimgalore) {
+    if (params.use_fastp) {
+        // Fastp handles both QC and Trimming in one fast pass
+        FASTP(read_pairs)
+        ch_after_trim = FASTP.out.reads
+
+        if (!params.skip_multiqc_trimmed) {
+            MULTIQC_TRIM(FASTP.out.json.collect(), "_trimmed")
+        }
+    } else if (params.run_trimgalore) {
         if (!params.skip_fastqc_raw) {
             FASTQC_RAW(read_pairs, "_raw")
             if (!params.skip_multiqc_raw) {
-                MULTIQC_RAW(FASTQC_RAW.out.zip.collect(), "_raw")
+                MULTIQC_RAW(FASTQC_RAW.out.zip.mix(FASTQC_RAW.out.txt).collect(), "_raw")
             }
         }
 
@@ -68,7 +78,7 @@ workflow {
         if (!params.skip_fastqc_trimmed) {
             FASTQC_TRIM(TRIMGALORE.out.reads, "_trimmed")
             if (!params.skip_multiqc_trimmed) {
-                MULTIQC_TRIM(FASTQC_TRIM.out.zip.collect(), "_trimmed")
+                MULTIQC_TRIM(FASTQC_TRIM.out.zip.mix(FASTQC_TRIM.out.txt).collect(), "_trimmed")
             }
         }
     } else {
@@ -95,7 +105,7 @@ workflow {
         if (!params.skip_fastqc_ribo) {
             FASTQC_RIBO(RIBODETECTOR.out.reads, "_ribo")
             if (!params.skip_multiqc_ribo) {
-                MULTIQC_RIBO(FASTQC_RIBO.out.zip.collect(), "_ribo")
+                MULTIQC_RIBO(FASTQC_RIBO.out.zip.mix(FASTQC_RIBO.out.txt).collect(), "_ribo")
             }
         }
     }
@@ -114,6 +124,22 @@ workflow {
             file(params.parabricks_index),
             file(params.genome_fasta),
             file(params.genome_gtf)
+        )
+    }
+
+    // 5.5 Virulence Factor Analysis (optional)
+    if (params.run_virulence) {
+        if (params.virulence_index && params.virulence_index != true && params.virulence_index != "null") {
+            ch_virulence_index = file(params.virulence_index)
+        } else if (params.virulence_db && params.virulence_db != true && params.virulence_db != "null") {
+            SALMON_VIRULENCE_INDEX(file(params.virulence_db))
+            ch_virulence_index = SALMON_VIRULENCE_INDEX.out.index
+        } else {
+            error "Please provide --virulence_db or --virulence_index for virulence factor analysis"
+        }
+        SALMON_VIRULENCE_QUANT(
+            ch_to_use,
+            ch_virulence_index
         )
     }
 
@@ -142,7 +168,7 @@ workflow {
     }
 
     if (params.run_salmon) {
-        if (params.salmon_index) {
+        if (params.salmon_index && params.salmon_index != true && params.salmon_index != "null") {
             ch_salmon_index = file(params.salmon_index)
         } else {
             SALMON_INDEX(file(params.genome_fasta))
@@ -166,7 +192,7 @@ workflow {
         if (params.run_dge) {
             DGE_R_ANALYSIS(
                 MERGE_COUNTS.out.matrix,
-                file(params.samplesheet), // Using samplesheet as metadata or separate metadata param
+                params.samplesheet ? file(params.samplesheet) : samplesheet_ch.csv,
                 params.dge_control,
                 params.dge_treatment,
                 params.dge_comparison_name,
