@@ -1,15 +1,15 @@
 process FASTP {
     tag "$sample_id"
     label 'process_medium'
-    container 'quay.io/biocontainers/fastp:0.24.0--h81e0983_0'
+    container 'quay.io/biocontainers/fastp:1.3.3--h43da1c4_0'
 
     input:
     tuple val(sample_id), path(reads)
 
     output:
-    tuple val(sample_id), path("${sample_id}_fastp_1.fq.gz"), path("${sample_id}_fastp_2.fq.gz"), emit: reads
-    path "${sample_id}.fastp.json"                                                            , emit: json
-    path "${sample_id}.fastp.html"                                                            , emit: html
+    tuple val(sample_id), path("${sample_id}_fastp_{1,2}.fq.gz"), emit: reads
+    path "${sample_id}.fastp.json"                               , emit: json
+    path "${sample_id}.fastp.html"                               , emit: html
 
     publishDir "${params.outdir}/fastp", mode: 'copy'
 

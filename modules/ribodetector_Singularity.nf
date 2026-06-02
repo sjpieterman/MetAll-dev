@@ -22,6 +22,7 @@ process RIBODETECTOR {
     } else {
         output_args = "-o ${sample_id}_ribofree_1.fq.gz ${sample_id}_ribofree_2.fq.gz"
     }
+    def chunk_arg = params.rd_chunk_size ? "-c ${params.rd_chunk_size}" : ""
     """
     # Running RiboDetector with parameterized configuration
     ribodetector \\
@@ -30,6 +31,7 @@ process RIBODETECTOR {
         -i ${reads[0]} ${reads[1]} \\
         -e ${params.rd_model} \\
         -m ${params.rd_gpu_mem} \\
+        ${chunk_arg} \\
         ${output_args} \\
         2> ${sample_id}_ribodetector.log
     """

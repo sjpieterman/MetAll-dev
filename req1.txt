@@ -1,0 +1,499 @@
+Hi! With the **full pipeline run front-to-back** and the optional flags enabled, the chronological flow is roughly this.
+
+A couple of important assumptions:
+
+- You are **not** using the DGE-only shortcut with `--dge_counts` and `--dge_metadata`; if you do, the pipeline skips the read-processing workflow and runs only DGE.
+- If both `use_fastp` and `run_trimgalore` are enabled, **Fastp runs and Trim Galore is skipped**, because the workflow checks `use_fastp` first.
+- Some steps run **per sample in parallel**, but below is the logical chronological order.
+
+---
+
+## Full pipeline order with all options enabled
+
+### 1. Input discovery / samplesheet creation
+
+1. The pipeline checks that `--reads` was provided.
+2. `SHEETMAKER` scans the input reads location.
+3. It creates a samplesheet.
+4. The samplesheet is parsed into paired-end read tuples:
+
+```plain text
+sample_id -> fastq_1, fastq_2
+```
+
+
+---
+
+### 2. Raw read QC
+
+If `run_qc` is enabled:
+
+5. `FASTQC_RAW` runs on the original input FASTQ pairs.
+6. `MULTIQC_RAW` summarizes the raw FastQC outputs.
+
+Outputs are grouped as raw QC reports.
+
+---
+
+### 3. Read trimming / preprocessing
+
+If `use_fastp` is enabled:
+
+7. `FASTP` runs on the raw paired-end reads.
+   - Performs trimming.
+   - Also produces Fastp QC-style reports.
+8. The trimmed Fastp reads become the active read channel for downstream steps.
+
+If `use_fastp` is disabled but `run_trimgalore` is enabled instead:
+
+7. `TRIMGALORE` runs on the raw paired-end reads.
+8. The Trim Galore reads become the active read channel.
+
+With **all options enabled**, the effective path is:
+
+```plain text
+raw reads -> FASTP -> trimmed reads
+```
+
+
+Trim Galore does **not** run in that case.
+
+---
+
+### 4. Taxonomic classification on trimmed reads
+
+If `run_kraken2` is enabled:
+
+9. `RUN_TAXONOMY_TRIM` runs on the trimmed reads.
+
+The suffix used for this taxonomy stage is:
+
+```plain text
+.trimmed
+```
+
+
+This gives taxonomic classification results after trimming, before rRNA depletion.
+
+---
+
+### 5. QC on trimmed reads
+
+If `run_qc` is enabled:
+
+10. `FASTQC_TRIM` runs on the trimmed reads.
+11. `MULTIQC_TRIM` summarizes:
+    - Fastp JSON reports, if Fastp was used.
+    - Trimmed-read FastQC ZIP outputs.
+
+---
+
+### 6. RiboDetector rRNA removal
+
+If `run_ribodetector` is enabled:
+
+12. `RIBODETECTOR` runs on the trimmed reads.
+13. It produces:
+    - rRNA-depleted reads.
+    - Reads classified as rRNA.
+
+The downstream active reads become:
+
+```plain text
+trimmed reads -> RiboDetector -> ribo-free reads
+```
+
+
+---
+
+### 7. Taxonomic classification after RiboDetector
+
+If `run_kraken2` is enabled:
+
+14. `RUN_TAXONOMY_RIBO` runs on the RiboDetector-cleaned reads.
+
+The suffix used here is:
+
+```plain text
+.ribo_free
+```
+
+
+---
+
+### 8. QC after RiboDetector
+
+If `run_qc` is enabled:
+
+15. `FASTQC_RIBO` runs on the RiboDetector rRNA-depleted reads.
+16. `FASTQC_RIBO_RRNA` runs on the reads identified as rRNA.
+17. `MULTIQC_RIBO` summarizes both sets of FastQC results.
+
+---
+
+### 9. SortMeRNA rRNA removal
+
+If `run_sortmerna` is enabled:
+
+18. `SORTMERNA` runs on the RiboDetector-cleaned reads using `smr_db_dir`.
+19. It produces:
+    - SortMeRNA rRNA-depleted reads.
+    - SortMeRNA rRNA reads.
+
+The downstream active reads become:
+
+```plain text
+ribo-free reads -> SortMeRNA -> smr-free reads
+```
+
+
+So with all rRNA-removal options enabled, the main read path is:
+
+```plain text
+raw reads
+-> Fastp trimmed reads
+-> RiboDetector ribo-free reads
+-> SortMeRNA smr-free reads
+```
+
+
+---
+
+### 10. Taxonomic classification after SortMeRNA
+
+If `run_kraken2` is enabled:
+
+20. `RUN_TAXONOMY_SMR` runs on the SortMeRNA-cleaned reads.
+
+The suffix used here is:
+
+```plain text
+.smr_free
+```
+
+
+---
+
+### 11. QC after SortMeRNA
+
+If `run_qc` is enabled:
+
+21. `FASTQC_SMR` runs on the SortMeRNA rRNA-depleted reads.
+22. `FASTQC_SMR_RRNA` runs on the SortMeRNA rRNA reads.
+23. `MULTIQC_SMR` summarizes both sets of FastQC results.
+
+---
+
+### 12. Parabricks RNA workflow
+
+If `run_parabricks` is enabled:
+
+24. `PARABRICKS_RNA` runs on the current cleaned reads.
+
+At this point, with all previous options enabled, those reads are the SortMeRNA-cleaned reads.
+
+Inputs include:
+
+```plain text
+cleaned reads
+Parabricks index
+genome FASTA
+genome GTF
+```
+
+
+This branch runs independently of the later STAR/Salmon quantification branches.
+
+---
+
+### 13. Virulence factor analysis setup
+
+If `run_virulence` is enabled:
+
+25. The workflow decides which virulence index to use.
+
+There are two possible paths:
+
+#### If `virulence_index` is provided
+
+26. The existing virulence index is used directly.
+
+#### Otherwise, if `virulence_db` is provided
+
+26. `SALMON_VIRULENCE_INDEX` builds a Salmon index from the virulence database.
+
+If neither is provided, the pipeline stops with an error.
+
+---
+
+### 14. Virulence quantification
+
+27. `SALMON_VIRULENCE_QUANT` runs on the current cleaned reads using the virulence index.
+
+With all cleaning options enabled, this means:
+
+```plain text
+SortMeRNA-cleaned reads -> virulence Salmon quantification
+```
+
+
+---
+
+### 15. Initialize quantification channels
+
+28. The pipeline initializes empty channels for:
+
+```plain text
+featureCounts counts
+STAR gene counts
+Salmon transcript/gene quantification files
+```
+
+
+These are later filled depending on which quantification options are enabled.
+
+---
+
+### 16. STAR alignment
+
+If `run_star` is enabled:
+
+29. `STAR_ALIGN` runs on the current cleaned reads.
+
+Inputs include:
+
+```plain text
+cleaned paired-end reads
+STAR genome index
+genome GTF
+```
+
+
+Outputs include:
+
+```plain text
+sorted BAM
+STAR final log
+splice junction table
+STAR ReadsPerGene count file
+```
+
+
+---
+
+### 17. featureCounts quantification
+
+If both `run_star` and `run_featurecounts` are enabled:
+
+30. `FEATURECOUNTS` runs on the STAR-aligned BAM files.
+
+Inputs include:
+
+```plain text
+STAR BAM
+genome GTF
+```
+
+
+Outputs include:
+
+```plain text
+featureCounts count table
+featureCounts summary file
+```
+
+
+---
+
+### 18. Salmon transcript quantification setup
+
+If `run_salmon` is enabled:
+
+31. The workflow decides which Salmon index to use.
+
+There are two possible paths:
+
+#### If `salmon_index` is provided
+
+32. The existing Salmon index is used directly.
+
+#### Otherwise
+
+32. `SALMON_INDEX` builds a Salmon index from the genome/transcript FASTA.
+
+---
+
+### 19. Salmon quantification
+
+33. `SALMON_QUANT` runs on the current cleaned reads using the Salmon index and genome GTF.
+
+Outputs include Salmon quantification files for each sample.
+
+---
+
+### 20. Merge count outputs
+
+If any of these are enabled:
+
+```plain text
+run_star
+run_salmon
+run_featurecounts
+```
+
+
+then:
+
+34. `MERGE_COUNTS` runs.
+
+It can merge counts from:
+
+```plain text
+featureCounts
+STAR ReadsPerGene
+Salmon
+```
+
+
+Main output:
+
+```plain text
+gene_counts_matrix.tsv
+```
+
+
+Optional outputs may include additional method-specific count matrices.
+
+---
+
+### 21. Differential gene expression analysis
+
+If `run_dge` is enabled:
+
+35. `DGE_R_ANALYSIS` runs using:
+
+```plain text
+merged gene counts matrix
+samplesheet / metadata
+control group
+treatment group
+comparison name
+DGE tool
+batch settings
+group column
+covariates
+```
+
+
+Depending on parameters, it may use:
+
+```plain text
+DESeq2
+edgeR
+limma
+```
+
+
+It can also optionally include:
+
+```plain text
+batch correction settings
+covariates
+GO analysis
+GSEA analysis
+biomaRt annotation
+```
+
+
+Outputs include:
+
+```plain text
+dge_results.csv
+volcano_plot.png
+volcano_plot.html
+ma_plot.html
+pca_plot.png
+pca_plot.html
+heatmap.html
+dge_summary.json
+top50_degs.csv
+normalized_counts.tsv
+dataset_qc/
+```
+
+
+Some of these are optional depending on the DGE settings and what the R script generates.
+
+---
+
+## Compact chronological summary
+
+```plain text
+1.  Discover input reads
+2.  Build samplesheet
+3.  Parse paired FASTQs
+
+4.  Raw FastQC
+5.  Raw MultiQC
+
+6.  Fastp trimming/QC
+    or Trim Galore if Fastp is disabled
+
+7.  Kraken2 taxonomy on trimmed reads
+8.  FastQC on trimmed reads
+9.  MultiQC on trimmed reads
+
+10. RiboDetector rRNA removal
+11. Kraken2 taxonomy on RiboDetector-cleaned reads
+12. FastQC on RiboDetector clean + rRNA reads
+13. MultiQC after RiboDetector
+
+14. SortMeRNA rRNA removal
+15. Kraken2 taxonomy on SortMeRNA-cleaned reads
+16. FastQC on SortMeRNA clean + rRNA reads
+17. MultiQC after SortMeRNA
+
+18. Parabricks RNA branch
+
+19. Build or load virulence Salmon index
+20. Salmon virulence quantification
+
+21. STAR alignment
+22. featureCounts quantification
+
+23. Build or load Salmon index
+24. Salmon quantification
+
+25. Merge STAR / featureCounts / Salmon count outputs
+
+26. Differential gene expression analysis
+27. Generate DGE tables, plots, summaries, and normalized counts
+```
+
+
+So the main biological data path, with all preprocessing options enabled, is:
+
+```plain text
+raw FASTQs
+-> Fastp
+-> RiboDetector
+-> SortMeRNA
+-> STAR / featureCounts / Salmon / virulence quantification
+-> merged count matrix
+-> DGE analysis
+```
+If your goal is to make your pipeline closer to the paper
+I’d prioritize these additions:
+Add microbial functional profiling
+e.g. gene families/pathways from microbial reads.
+Wire decontamination into the main taxonomy flow
+especially if using low-biomass nasopharyngeal samples.
+Add host–microbe integration reports
+correlate host DE genes/pathways with microbial taxa/functions.
+Add phenotype classification
+train/test model for pneumonia vs. healthy using host, microbial, or combined features.
+Add compositional differential abundance testing
+for microbial taxa, separate from host gene DGE.
+Produce a final combined report
+host DGE + microbial taxa + microbial functions + virulence + classification summary.
+In one sentence: your pipeline is a strong modular processing workflow, while the paper is a complete disease-focused metatranscriptomic analysis linking host response and microbial activity to pneumonia status.

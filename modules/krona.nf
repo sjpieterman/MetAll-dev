@@ -1,5 +1,6 @@
 process KRONA {
     tag "$sample_id"
+    label 'process_low'
     container 'quay.io/biocontainers/krona:2.8.1--pl5321hdfd78af_1'
 
     input:

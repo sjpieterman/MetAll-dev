@@ -29,7 +29,7 @@ process SALMON_QUANT {
 
     output:
     tuple val(sample_id), path("${sample_id}_salmon"), emit: results
-    path "${sample_id}_salmon/quant.sf", emit: quant
+    path "${sample_id}.salmon.quant.sf", emit: quant
 
     publishDir "${params.outdir}/salmon", mode: 'copy'
 
@@ -43,6 +43,9 @@ process SALMON_QUANT {
         -p ${task.cpus} \\
         -o ${sample_id}_salmon \\
         --validateMappings \\
+        --minAssignedFrags 1 \\
         -g ${gtf}
+    
+    cp ${sample_id}_salmon/quant.sf ${sample_id}.salmon.quant.sf
     """
 }

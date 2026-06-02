@@ -1,5 +1,6 @@
 process BRACKEN {
     tag "$sample_id"
+    label 'process_medium'
     container 'quay.io/biocontainers/bracken:3.1--h9948957_0'
 
     input:

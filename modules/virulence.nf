@@ -28,7 +28,7 @@ process SALMON_VIRULENCE_QUANT {
 
     output:
     tuple val(sample_id), path("${sample_id}_salmon_virulence"), emit: results
-    path "${sample_id}_salmon_virulence/quant.sf", emit: quant
+    path "${sample_id}.virulence.salmon.quant.sf", emit: quant
 
     publishDir "${params.outdir}/virulence", mode: 'copy'
 
@@ -41,6 +41,9 @@ process SALMON_VIRULENCE_QUANT {
         -2 ${reads[1]} \\
         -p ${task.cpus} \\
         -o ${sample_id}_salmon_virulence \\
-        --validateMappings
+        --validateMappings \\
+        --minAssignedFrags 1
+    
+    cp ${sample_id}_salmon_virulence/quant.sf ${sample_id}.virulence.salmon.quant.sf
     """
 }

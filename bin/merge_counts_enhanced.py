@@ -32,7 +32,12 @@ def merge_salmon(files):
     dfs = []
     for f in files:
         # Salmon quant.sf: Name, Length, EffectiveLength, TPM, NumReads
-        sample_name = os.path.basename(os.path.dirname(f)).replace('_salmon', '')
+        # Filename is expected to be {sample_id}.salmon.quant.sf or {sample_id}_salmon/quant.sf
+        if f.endswith('.salmon.quant.sf'):
+            sample_name = os.path.basename(f).replace('.salmon.quant.sf', '')
+        else:
+            sample_name = os.path.basename(os.path.dirname(f)).replace('_salmon', '')
+        
         df = pd.read_csv(f, sep='\t')
         df = df[['Name', 'NumReads']]
         df.columns = ['Geneid', sample_name]

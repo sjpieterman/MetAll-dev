@@ -5,7 +5,7 @@ process DGE_R_ANALYSIS {
     label 'process_medium'
     publishDir "${params.outdir}/dge_analysis/${comparison_name}", mode: 'copy'
 
-    container 'quay.io/biocontainers/mulled-v2-88ad01a0658428173499f668f12143003e670d8a:afaa2c0fcd83014cb964175390099898f82877a5-0'
+    container 'quay.io/biocontainers/mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40:afaa2c0fcd83014cb964175390099898f82877a5-0'
 
     input:
     path counts_file

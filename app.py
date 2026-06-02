@@ -111,7 +111,7 @@ def get_run_outdir(run_name, base_outdir=None):
     """
     Resolves the output directory for a given run name.
     If run_name is an absolute path, it returns it directly.
-    Otherwise, it resolves it relative to the 'results' directory.
+    Otherwise, it resolves it into the 'results' subdirectory of base_outdir.
     """
     if not run_name:
         run_name = "run_001"
@@ -123,13 +123,21 @@ def get_run_outdir(run_name, base_outdir=None):
         
     # Otherwise, resolve relative to base_outdir or default results dir
     if not base_outdir:
-        base_outdir = os.path.join(BASE_DIR, "results")
+        base_outdir = os.path.join(BASE_DIR)
     else:
         base_outdir = os.path.expanduser(base_outdir)
         if not os.path.isabs(base_outdir):
             base_outdir = os.path.join(BASE_DIR, base_outdir)
             
-    return os.path.normpath(os.path.join(base_outdir, run_name))
+    # Proposed new path: base_outdir/results/run_name
+    new_path = os.path.normpath(os.path.join(base_outdir, "results", run_name))
+    
+    # Backward compatibility: if the run exists in the old location (base_outdir/run_name), use that
+    old_path = os.path.normpath(os.path.join(base_outdir, run_name))
+    if os.path.exists(old_path) and not os.path.exists(new_path) and run_name != "results":
+        return old_path
+        
+    return new_path
 
 def find_counts_file(run_outdir):
     """
@@ -174,11 +182,12 @@ def find_counts_file(run_outdir):
 
 INITIAL_PARAMS = {
     "reads": "/media/baseripper/volume_28TB_1/P11065_test/",
-    "outdir": "/media/baseripper/volume_28TB_1/P11065_test/results",
+    "outdir": "/media/baseripper/volume_28TB_1/P11065_test",
     "profile": "singularity",
     "cpus": 40,
     "memory": "200.GB",
     "resume_pipeline": True,
+    "run_qc": True,
     "run_trimgalore": True,
     "run_ribodetector": True,
     "run_sortmerna": False,
@@ -189,7 +198,9 @@ INITIAL_PARAMS = {
     "tg_clip_r1": 0,
     "tg_clip_r2": 0,
     "use_fastp": False,
-    "use_falco": True,
+    "use_rastqc": True,
+    "rastqc_bin": "/home/baseripper/programs/RastQC/target/release/rastqc",
+    "rastqc_container": None,
     "rd_model": "norrna",
     "rd_len": 150,
     "rd_gpu_mem": 24,
@@ -216,6 +227,10 @@ INITIAL_PARAMS = {
     "virulence_db": "/home/baseripper/programs/vfdb/VFDB_setB_pro.fas",
     "virulence_index": "",
     "run_dge": False,
+    "run_decontam": False,
+    "decontam_col": "is_negative_control",
+    "decontam_method": "prevalence",
+    "decontam_threshold": 0.1,
     "dge_tool": "deseq2",
     "dge_control": None,
     "dge_treatment": None,
@@ -254,7 +269,7 @@ def build_sidebar():
                 className="mb-3"
             ),
 
-            html.Label("Base Results Directory", className="mt-2", style={"fontWeight": "500", "fontSize": "0.9rem"}),
+            html.Label("Base Project / Work Directory", className="mt-2", style={"fontWeight": "500", "fontSize": "0.9rem"}),
             dbc.Input(id="base-outdir", value=INITIAL_PARAMS["outdir"], type="text", debounce=True, className="mb-3"),
 
             html.Label("Output Run Name", className="mt-2", style={"fontWeight": "500", "fontSize": "0.9rem"}),
@@ -270,6 +285,7 @@ def build_sidebar():
             html.H4("Workflow", style={"fontWeight": "600", "color": "#00d9ff"}),
             dbc.Checklist(
                 options=[
+                    {"label": "Quality Control", "value": "run_qc"},
                     {"label": "TrimGalore", "value": "run_trimgalore"},
                     {"label": "RiboDetector", "value": "run_ribodetector"},
                     {"label": "SortMeRNA", "value": "run_sortmerna"},
@@ -279,9 +295,10 @@ def build_sidebar():
                     {"label": "featureCounts", "value": "run_featurecounts"},
                     {"label": "Salmon", "value": "run_salmon"},
                     {"label": "Virulence Factors", "value": "run_virulence"},
+                    {"label": "Decontaminate (Neg. Controls)", "value": "run_decontam"},
                     {"label": "DGE Analysis", "value": "run_dge"},
                 ],
-                value=["run_trimgalore", "run_ribodetector", "run_kraken2", "run_star", "run_featurecounts", "run_salmon", "run_virulence", "run_dge"],
+                value=["run_qc", "run_trimgalore", "run_ribodetector", "run_kraken2", "run_star", "run_featurecounts", "run_salmon", "run_virulence", "run_dge"],
                 id="workflow-checks", switch=True
             ),
 
@@ -333,7 +350,9 @@ def build_preprocessing_tab():
                 html.Div(id="samplesheet-table-container")
             ], className="p-3")),
             dbc.Tab(label="Raw Data QC", children=html.Div(id="raw-qc-container", className="p-3")),
-            dbc.Tab(label="Post-Trimming QC", children=html.Div(id="trimmed-qc-container", className="p-3"))
+            dbc.Tab(label="Post-Trimming QC", children=html.Div(id="trimmed-qc-container", className="p-3")),
+            dbc.Tab(label="Ribo-depletion QC", children=html.Div(id="ribo-qc-container", className="p-3")),
+            dbc.Tab(label="SortMeRNA QC", children=html.Div(id="smr-qc-container", className="p-3"))
         ])
     ])
 
@@ -350,21 +369,20 @@ def build_trimgalore_tab():
             dbc.Input(id="tg-clip-r1", type="number", value=INITIAL_PARAMS["tg_clip_r1"], className="mb-2"),
             html.Label("5' Clip R2", className="mt-2", style={"fontWeight": "500", "fontSize": "0.9rem"}),
             dbc.Input(id="tg-clip-r2", type="number", value=INITIAL_PARAMS["tg_clip_r2"], className="mb-2"),
-            dbc.Checklist(
-                options=[{"label": "Run Internal FastQC", "value": 1}],
-                value=[1] if INITIAL_PARAMS["tg_fastqc"] else [],
-                id="tg-fastqc", switch=True, className="mt-3"
-            ),
             html.Hr(),
             html.H5("Performance Options", className="mt-3", style={"fontSize": "1rem"}),
             dbc.Checklist(
                 options=[
                     {"label": "Use Fastp (Faster QC & Trimming)", "value": "use_fastp"},
-                    {"label": "Use Falco (Faster FastQC)", "value": "use_falco"},
+                    {"label": "Use RastQC", "value": "use_rastqc"},
                 ],
-                value=(["use_fastp"] if INITIAL_PARAMS["use_fastp"] else []) + (["use_falco"] if INITIAL_PARAMS["use_falco"] else []),
+                value=(["use_fastp"] if INITIAL_PARAMS["use_fastp"] else []) + (["use_rastqc"] if INITIAL_PARAMS["use_rastqc"] else []),
                 id="perf-checks", switch=True, className="mt-2"
             ),
+            html.Div([
+                html.Label("RastQC Path", className="mt-2", style={"fontWeight": "500", "fontSize": "0.8rem"}),
+                dbc.Input(id="rastqc-bin", type="text", value=INITIAL_PARAMS["rastqc_bin"], placeholder="rastqc", size="sm"),
+            ], id="rastqc-settings", style={"display": "block" if INITIAL_PARAMS["use_rastqc"] else "none"}),
         ]),
         html.Div([
             html.H5("Trimming Statistics", className="mt-3 mb-3", style={"fontWeight": "600", "color": "#00d9ff"}),
@@ -553,6 +571,23 @@ def build_metatranscriptomics_tab():
                 dcc.Slider(0.0, 1.0, 0.05, value=INITIAL_PARAMS["k2_confidence"], id="k2-confidence", marks={0: '0', 0.5: '0.5', 1: '1'}),
                 html.Label("Bracken Taxonomic Level", className="mt-2"),
                 dcc.Dropdown(options=["D", "P", "C", "O", "F", "G", "S"], value=INITIAL_PARAMS["bracken_level"], id="bracken-level"),
+                html.Hr(),
+                html.H6("Decontamination Settings", style={"fontWeight": "600", "color": "#00d9ff"}),
+                html.P("Filter contaminants identified from negative controls.", className="small text-muted"),
+                html.Label("Negative Control Column", className="mt-2", style={"fontSize": "0.8rem"}),
+                dcc.Dropdown(id="decontam-col", value=INITIAL_PARAMS["decontam_col"], placeholder="Select metadata column..."),
+                html.Label("Decontam Method", className="mt-2", style={"fontSize": "0.8rem"}),
+                dcc.Dropdown(
+                    id="decontam-method",
+                    options=[
+                        {"label": "Prevalence", "value": "prevalence"},
+                        {"label": "Frequency", "value": "frequency"},
+                        {"label": "Combined", "value": "combined"}
+                    ],
+                    value=INITIAL_PARAMS["decontam_method"]
+                ),
+                html.Label("Decontam Threshold", className="mt-2", style={"fontSize": "0.8rem"}),
+                dbc.Input(id="decontam-threshold", type="number", value=INITIAL_PARAMS["decontam_threshold"], step=0.01, size="sm"),
                 html.Hr(),
                 html.Label("Select Sample for Detail"),
                 dcc.Dropdown(id="taxonomy-sample-dropdown", placeholder="Select a sample...", persistence=True, persistence_type='session'),
@@ -1009,18 +1044,30 @@ def serve_reports():
 
 # --- 7. Callbacks ---
 
+@app.callback(
+    Output("rastqc-settings", "style"),
+    Input("perf-checks", "value")
+)
+def toggle_rastqc_settings(perf_checks):
+    perf_checks = perf_checks or []
+    if "use_rastqc" in (perf_checks or []):
+        return {"display": "block"}
+    return {"display": "none"}
+
+
 # Callback to populate DGE metadata dropdowns
 @app.callback(
     [Output("dge-group-col", "options"),
      Output("batch-col", "options"),
-     Output("dge-covariates", "options")],
+     Output("dge-covariates", "options"),
+     Output("decontam-col", "options")],
     [Input("metadata-datatable", "columns")]
 )
 def update_dge_dropdowns(columns):
     if not columns:
-        return [], [], []
+        return [], [], [], []
     options = [{"label": col["name"], "value": col["id"]} for col in columns]
-    return options, options, options
+    return options, options, options, options
 
 @app.callback(
     [Output("dge-control", "options"),
@@ -1058,7 +1105,6 @@ pipeline_log_file = None
      State("tg-min-len", "value"),
      State("tg-clip-r1", "value"),
      State("tg-clip-r2", "value"),
-     State("tg-fastqc", "value"),
      State("rd-len", "value"),
      State("rd-mode", "value"),
      State("rd-device", "value"),
@@ -1096,11 +1142,16 @@ pipeline_log_file = None
      State("dge-auto-install", "value"),
      State("dge-proxy", "value"),
      State("base-outdir", "value"),
-     State("perf-checks", "value")],
+     State("rastqc-bin", "value"),
+     State("perf-checks", "value"),
+     State("decontam-col", "value"),
+     State("decontam-method", "value"),
+     State("decontam-threshold", "value"),
+     State("metadata-datatable", "data")],
     prevent_initial_call=True
 )
 def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
-                 tg_quality, tg_min_len, tg_clip_r1, tg_clip_r2, tg_fastqc,
+                 tg_quality, tg_min_len, tg_clip_r1, tg_clip_r2,
                  rd_len, rd_mode, rd_device, rd_gpu_mem, rd_threads,
                  smr_coverage, smr_mismatch, smr_num_align, smr_db_dir,
                  k2_db_path, k2_confidence, bracken_level,
@@ -1108,7 +1159,8 @@ def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
                  dge_tool, dge_control, dge_treatment, dge_comparison,
                  batch_method, batch_col, dge_p_thresh, dge_fc_thresh,
                  dge_group_col, dge_covariates, enrichment_checks, ontology, organism_db, keytype,
-                 use_biomart, auto_install, proxy, base_outdir, perf_checks):
+                 use_biomart, auto_install, proxy, base_outdir, rastqc_bin, perf_checks,
+                 decontam_col, decontam_method, decontam_threshold, metadata_data):
     global pipeline_process, pipeline_log_file
 
     if n_clicks is None:
@@ -1127,7 +1179,6 @@ def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
     tg_min_len = coalesce(tg_min_len, INITIAL_PARAMS["tg_min_length"])
     tg_clip_r1 = coalesce(tg_clip_r1, INITIAL_PARAMS["tg_clip_r1"])
     tg_clip_r2 = coalesce(tg_clip_r2, INITIAL_PARAMS["tg_clip_r2"])
-    tg_fastqc = coalesce(tg_fastqc, [1] if INITIAL_PARAMS["tg_fastqc"] else [])
 
     rd_len = coalesce(rd_len, INITIAL_PARAMS["rd_len"])
     rd_mode = coalesce(rd_mode, INITIAL_PARAMS["rd_model"])
@@ -1139,6 +1190,7 @@ def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
     smr_mismatch = coalesce(smr_mismatch, INITIAL_PARAMS["smr_mismatch"])
     smr_num_align = coalesce(smr_num_align, INITIAL_PARAMS["smr_num_alignments"])
     smr_db_dir = coalesce(smr_db_dir, INITIAL_PARAMS["smr_db_dir"])
+    rastqc_bin = coalesce(rastqc_bin, INITIAL_PARAMS["rastqc_bin"])
 
     k2_db_path = coalesce(k2_db_path, INITIAL_PARAMS["kraken2_db"])
     k2_confidence = coalesce(k2_confidence, INITIAL_PARAMS["k2_confidence"])
@@ -1163,13 +1215,41 @@ def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
     dge_covariates = coalesce(dge_covariates, [])
     perf_checks = coalesce(perf_checks, [])
     use_fastp = "use_fastp" in perf_checks
-    use_falco = "use_falco" in perf_checks
+    use_rastqc = "use_rastqc" in perf_checks
+    run_decontam = "run_decontam" in (workflow or [])
 
-    # --- Resolve output directory ---
+    # --- Resolve output and work directory ---
     outdir = get_run_outdir(run_name, base_outdir)
+    
+    # Also resolve a base directory for Nextflow work files
+    res_base = base_outdir
+    if not res_base:
+        res_base = BASE_DIR
+    else:
+        res_base = os.path.expanduser(res_base)
+        if not os.path.isabs(res_base):
+            res_base = os.path.join(BASE_DIR, res_base)
+    work_dir = os.path.join(res_base, "work")
 
     if not run_name.strip():
         return "Please provide an output run name (e.g. run_001).", False, True
+    
+    # Save metadata for decontamination if enabled
+    metadata_path = "null"
+    if run_decontam and metadata_data:
+        try:
+            metadata_path = os.path.join(outdir, "metadata_decontam.csv")
+            os.makedirs(os.path.dirname(metadata_path), exist_ok=True)
+            pd.DataFrame(metadata_data).to_csv(metadata_path, index=False)
+        except Exception as e:
+            print(f"Error saving decontam metadata: {e}")
+            run_decontam = False # Disable if we can't save it
+    elif run_decontam:
+        # User enabled decontam but provided no metadata
+        run_decontam = False 
+    
+    # --- Resolve output directory ---
+    # (redundant resolution removed)
 
     # If run_name is not absolute, it should be a simple folder name
     if not os.path.isabs(run_name.strip()):
@@ -1186,6 +1266,7 @@ def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
 
     cmd = [
         "nextflow", "run", "./main.nf",
+        "-work-dir", str(work_dir),
         "-profile", INITIAL_PARAMS["profile"],
         "--reads", str(reads),
         "--outdir", str(outdir),
@@ -1201,12 +1282,12 @@ def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
         "--run_salmon", str("run_salmon" in workflow).lower(),
         "--run_virulence", str("run_virulence" in workflow).lower(),
         "--run_dge", str("run_dge" in workflow).lower(),
+        "--run_qc", str("run_qc" in workflow).lower(),
 
         "--tg_quality", str(tg_quality),
         "--tg_min_length", str(tg_min_len),
         "--tg_clip_r1", str(tg_clip_r1),
         "--tg_clip_r2", str(tg_clip_r2),
-        "--tg_fastqc", str(1 in tg_fastqc).lower() if tg_fastqc else "false",
 
         "--rd_model", str(rd_mode),
         "--rd_len", str(rd_len),
@@ -1280,7 +1361,13 @@ def run_pipeline(n_clicks, reads, cpus, memory, resume, workflow, run_name,
 
     cmd.extend([
         "--use_fastp", str(use_fastp).lower(),
-        "--use_falco", str(use_falco).lower()
+        "--use_rastqc", str(use_rastqc).lower(),
+        "--rastqc_bin", str(rastqc_bin),
+        "--run_decontam", str(run_decontam).lower(),
+        "--decontam_metadata", str(metadata_path),
+        "--decontam_col", str(decontam_col or INITIAL_PARAMS["decontam_col"]),
+        "--decontam_method", str(decontam_method or INITIAL_PARAMS["decontam_method"]),
+        "--decontam_threshold", str(decontam_threshold or INITIAL_PARAMS["decontam_threshold"])
     ])
 
     if resume and 1 in resume:
@@ -1545,6 +1632,44 @@ def update_trimmed_qc(_, run_name, base_outdir):
             style={"width": "100%", "height": "1000px", "border": "none"}
         )
     return dbc.Alert("Trimmed QC report not found.", color="info")
+
+
+@app.callback(
+    Output("ribo-qc-container", "children"),
+    [Input("status-update", "n_intervals"),
+     Input("output-run-name", "value")],
+    [State("base-outdir", "value")]
+)
+def update_ribo_qc(_, run_name, base_outdir):
+    rel_path = "multiqc_ribo/multiqc_report_ribo.html"
+    current_outdir = get_run_outdir(run_name, base_outdir)
+    full_path = os.path.join(current_outdir, rel_path)
+    if os.path.exists(full_path):
+        params = urllib.parse.urlencode({"run_name": run_name, "path": rel_path, "base_outdir": base_outdir})
+        return html.Iframe(
+            src=f"/reports/serve?{params}",
+            style={"width": "100%", "height": "1000px", "border": "none"}
+        )
+    return dbc.Alert("Ribo-depletion QC report not found.", color="info")
+
+
+@app.callback(
+    Output("smr-qc-container", "children"),
+    [Input("status-update", "n_intervals"),
+     Input("output-run-name", "value")],
+    [State("base-outdir", "value")]
+)
+def update_smr_qc(_, run_name, base_outdir):
+    rel_path = "multiqc_smr/multiqc_report_smr.html"
+    current_outdir = get_run_outdir(run_name, base_outdir)
+    full_path = os.path.join(current_outdir, rel_path)
+    if os.path.exists(full_path):
+        params = urllib.parse.urlencode({"run_name": run_name, "path": rel_path, "base_outdir": base_outdir})
+        return html.Iframe(
+            src=f"/reports/serve?{params}",
+            style={"width": "100%", "height": "1000px", "border": "none"}
+        )
+    return dbc.Alert("SortMeRNA QC report not found.", color="info")
 
 
 # RiboDetector stats callback
@@ -2329,7 +2454,11 @@ def update_metadata_table(contents, filename):
         else:
             return [], []
 
-        columns = [{"name": i, "id": i} for i in df.columns]
+        # Add default decontamination column if missing
+        if 'is_negative_control' not in df.columns:
+            df['is_negative_control'] = False
+
+        columns = [{"name": i, "id": i, "editable": True} for i in df.columns]
         data = df.to_dict('records')
         return data, columns
     except Exception as e:
@@ -3268,4 +3397,4 @@ def run_markdown_analysis(n_clicks, code, comparison, run_name, tool, group_col,
 
 # --- 8. Run Server ---
 if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0", port=8502)
+    app.run(debug=False, host="0.0.0.0", port=8503)

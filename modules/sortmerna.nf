@@ -12,6 +12,7 @@ process SORTMERNA {
 
     output:
     tuple val(sample_id), path("${sample_id}_non_rRNA_*.fq.gz"), emit: reads
+    tuple val(sample_id), path("${sample_id}_rRNA_*.fq.gz")    , emit: rrna_reads, optional: true
     path "${sample_id}_sortmerna.log"                          , emit: log
     stdout emit: status // We'll use stdout to signal if it's a bad sample
 
@@ -44,11 +45,14 @@ process SORTMERNA {
     
     if [ -f ${sample_id}_non_rRNA_fwd.fq ] && [ -s ${sample_id}_non_rRNA_fwd.fq ]; then
         gzip ${sample_id}_non_rRNA*.fq
+        [ -f ${sample_id}_rRNA_fwd.fq ] && gzip ${sample_id}_rRNA*.fq || true
         echo "PASS" 
     else
         echo "${sample_id}"
         echo "" | gzip > ${sample_id}_non_rRNA_fwd.fq.gz
         echo "" | gzip > ${sample_id}_non_rRNA_rev.fq.gz
+        echo "" | gzip > ${sample_id}_rRNA_fwd.fq.gz
+        echo "" | gzip > ${sample_id}_rRNA_rev.fq.gz
     fi
 
     [ -f sortmerna.log ] && mv sortmerna.log ${sample_id}_sortmerna.log || touch ${sample_id}_sortmerna.log

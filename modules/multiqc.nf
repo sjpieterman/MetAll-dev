@@ -1,6 +1,6 @@
 process MULTIQC {
     label 'process_low'
-    container 'quay.io/biocontainers/multiqc:1.19--pyhdfd78af_0'
+    container 'quay.io/biocontainers/multiqc:1.25.1--pyhdfd78af_0'
 
     input:
     path 'qc_results/*', stageAs: 'results_??/*' 
@@ -19,7 +19,6 @@ process MULTIQC {
         -f \\
         -n multiqc_report${suffix}.html \\
         -o . \\
-        -p ${task.cpus} \\
         .
     """
 }

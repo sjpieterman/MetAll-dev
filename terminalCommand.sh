@@ -5,6 +5,7 @@ nextflow run ./main.nf \
   --outdir /media/baseripper/volume_28TB_1/metalOutput/run_P11065 \
   --max_cpus 56 \
   --max_mem 250.GB \
+  --run_qc false \
   --run_trimgalore false \
   --run_ribodetector false \
   --run_sortmerna false \
@@ -13,11 +14,6 @@ nextflow run ./main.nf \
   --run_star true \
   --run_featurecounts true \
   --run_salmon false \
-  --skip_fastqc_raw true \
-  --skip_fastqc_trimmed true \
-  --skip_multiqc_trimmed true \
-  --skip_fastqc_ribo true \
-  --skip_multiqc_ribo true \
   --star_index /media/baseripper/2TB_Baseripper/Stef/V0.1.1_MetaLL/MetaLL_0.0.1/assets/GRCh38_indexed \
   --genome_gtf /media/baseripper/2TB_Baseripper/Stef/V0.1.1_MetaLL/MetaLL_0.0.1/assets/GRCh38_indexed/gencode.v44.annotation.gtf \
   -resume

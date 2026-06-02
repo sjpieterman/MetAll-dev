@@ -17,8 +17,10 @@ process STAR_ALIGN {
     path "${sample_id}.Log.final.out"                                     , emit: log
     path "${sample_id}.SJ.out.tab"                                        , emit: sj
     path "${sample_id}.ReadsPerGene.out.tab"                              , emit: counts
+    tuple val(sample_id), path("${sample_id}.Unmapped.out.mate*.gz")     , emit: unmapped, optional: true
 
     publishDir "${params.outdir}/star", mode: 'copy'
+    publishDir "${params.outdir}/unmapped_reads", mode: 'copy', pattern: "${sample_id}.Unmapped.out.mate*.gz"
 
     script:
     """
@@ -30,7 +32,10 @@ process STAR_ALIGN {
         --outFileNamePrefix ${sample_id}. \\
         --outSAMtype BAM SortedByCoordinate \\
         --sjdbGTFfile ${gtf} \\
-        --quantMode GeneCounts
+        --quantMode GeneCounts \\
+        --outReadsUnmapped Fastx
+
+    gzip ${sample_id}.Unmapped.out.mate* || true
     """
 }
 
