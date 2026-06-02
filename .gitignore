@@ -59,6 +59,8 @@ Thumbs.db
 .env
 *.env
 
+req1.txt
+
 # Keep these if they are input data or important assets
 !mock_metadata.tsv
 test_data/
