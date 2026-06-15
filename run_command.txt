@@ -1,0 +1,41 @@
+To run the Kraken2 analysis (original software) on the test files:
+
+./run_kraken.sh
+
+To run the Kraken-GPU prototype on an entire folder of paired-end gzipped files:
+
+./run_folder_gpu.sh
+
+This script automatically finds R1/R2 pairs in /media/baseripper/myBook/rawdata_P11065, decompresses them on-the-fly, and performs paired-end classification.
+The results will be stored in output_rawdata/.
+
+To run the Kraken-GPU prototype on specific paired files manually:
+
+./cmake-build-debug/kraken_gpu R1.fastq R2.fastq -o output -d /path/to/db --paired
+
+For large databases (> 24GB VRAM), use the -l true flag to enable system RAM loading:
+./cmake-build-debug/kraken_gpu test_files/mate1.fastq test_files/mate2.fastq -o output -d /media/baseripper/volume_28TB_2/k2_standard_20251015 -l true
+
+To increase sensitivity (especially for short reads or divergent samples), you can use shorter k-mers:
+./cmake-build-debug/kraken_gpu test_files/mate1.fastq test_files/mate2.fastq -o output -d /media/baseripper/volume_28TB_2/k2_standard_08_GB_20260226 -k 31
+
+The tool now generates two output files per sample in the output folder:
+1. <filename>.output.txt: Kraken classification file (one line per read).
+2. <filename>.report.txt: Kraken-style report file (summary of taxonomy hits).
+
+Note: -k cannot be smaller than the minimizer length l (which is 31 for the current database).
+Default k is loaded from the database (usually 35).
+
+Make sure the test files are decompressed (use gunzip) before running.
+If you want to run directly on the original files (after decompressing them):
+
+gunzip -c test_files/P11065_117_P11065_test.Unmapped.out.mate1.gz > test_files/mate1.fastq
+gunzip -c test_files/P11065_117_P11065_test.Unmapped.out.mate2.gz > test_files/mate2.fastq
+./cmake-build-debug/kraken_gpu test_files/mate1.fastq test_files/mate2.fastq -o output -d /media/baseripper/volume_28TB_2/k2_standard_08_GB_20260226
+
+### 5. Bracken Analysis (Bulk)
+To run Bracken on all reports in the output folder:
+```bash
+./run_bracken_bulk.sh
+```
+The results will be saved in `output_folder/bracken/`.
