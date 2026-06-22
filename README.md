@@ -1,5 +1,11 @@
-# Kraken-GPU Prototype
+# MetaLL/GKraker - pipeline
 
+
+#MetaLL
+
+Metatranscriptomics pipeline with ultra fast GPU-accelerated speed for large metatranscriptomic datasets.
+
+#GKraker
 A GPU-accelerated k-mer classifier inspired by Kraken2/Bracken, designed for high-throughput multi-sample streaming on NVIDIA GPUs (targeted at RTX A5000 24GB).
 
 ## Key Features
